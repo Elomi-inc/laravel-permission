@@ -25,6 +25,8 @@ class PermissionRegistrar
     /** @var Collection|array|null */
     protected $permissions;
 
+    private array $paramFilterCache = [];
+
     public string $pivotRole;
 
     public string $pivotPermission;
@@ -47,6 +49,7 @@ class PermissionRegistrar
     private array $except = [];
 
     private array $wildcardPermissionsIndex = [];
+
 
     /**
      * PermissionRegistrar constructor.
@@ -133,6 +136,11 @@ class PermissionRegistrar
         return true;
     }
 
+    private function forgetCachedParamFilters()
+    {
+        $this->paramFilterCache = [];
+    }
+
     /**
      * Flush the cache.
      */
@@ -195,6 +203,7 @@ class PermissionRegistrar
             return;
         }
 
+        $this->forgetCachedParamFilters();
         $this->permissions = $this->cache->remember(
             $this->cacheKey, $this->cacheExpirationTime, fn () => $this->getSerializedPermissionsForCache()
         );
@@ -223,17 +232,24 @@ class PermissionRegistrar
     {
         $this->loadPermissions();
 
-        $method = $onlyOne ? 'first' : 'filter';
+        $MISSED = 'CACHE_MISS';
+        $cacheKey = md5(serialize(['params' => $params, 'onlyOne' => $onlyOne]));
+        $permissions = array_key_exists($cacheKey, $this->paramFilterCache) ? $this->paramFilterCache[$cacheKey] : $MISSED;
 
-        $permissions = $this->permissions->$method(static function ($permission) use ($params) {
-            foreach ($params as $attr => $value) {
-                if ($permission->getAttribute($attr) != $value) {
-                    return false;
+        if ($permissions === $MISSED) {
+            $method = $onlyOne ? 'first' : 'filter';
+            $permissions = $this->permissions->$method(static function ($permission) use ($params) {
+                foreach ($params as $attr => $value) {
+                    if ($permission->getAttribute($attr) != $value) {
+                        return false;
+                    }
                 }
-            }
 
-            return true;
-        });
+                return true;
+            });
+
+            $this->paramFilterCache[$cacheKey] = $permissions;
+        }
 
         if ($onlyOne) {
             $permissions = new Collection($permissions ? [$permissions] : []);
